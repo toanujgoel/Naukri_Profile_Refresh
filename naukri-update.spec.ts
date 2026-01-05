@@ -1,4 +1,33 @@
 import { test, expect, Page } from '@playwright/test';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// Supported resume file extensions (as per Naukri)
+const SUPPORTED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.rtf'];
+
+/**
+ * Automatically detect a resume file in the assets folder
+ * @returns The path to the first matching resume file, or null if none found
+ */
+function findResumeFile(): string | null {
+    const assetsDir = path.join(__dirname, 'assets');
+
+    if (!fs.existsSync(assetsDir)) {
+        console.error('Assets folder not found:', assetsDir);
+        return null;
+    }
+
+    const files = fs.readdirSync(assetsDir);
+
+    for (const file of files) {
+        const ext = path.extname(file).toLowerCase();
+        if (SUPPORTED_EXTENSIONS.includes(ext)) {
+            return path.join(assetsDir, file);
+        }
+    }
+
+    return null;
+}
 
 test.describe('Naukri Resume Headline Refresh', () => {
     test('should login and update resume headline', async ({ page }) => {
@@ -95,6 +124,57 @@ test.describe('Naukri Resume Headline Refresh', () => {
             await expect(successMessageContainer).toContainText('Resume Headline has been successfully saved.');
 
             console.log('Resume headline refreshed successfully!');
+
+            // --- 6. Update Resume ---
+            console.log('Starting Resume Update...');
+
+            // Scroll to the resume section to ensure it's visible
+            await page.evaluate(() => window.scrollTo(0, 0));
+            await page.waitForTimeout(1000);
+
+            // Find the "Update resume" button
+            // Based on DOM: <input type="button" value="Update resume" class="dummyUpload typ-14Bold">
+            const updateResumeButton = page.locator('input[type="button"][value="Update resume"], input.dummyUpload[value="Update resume"]').first();
+
+            // Wait for the button to be visible
+            await expect(updateResumeButton).toBeVisible({ timeout: 10000 });
+            console.log('Found "Update resume" button.');
+
+            // Set up file chooser handler before clicking the button
+            // The button click triggers a hidden file input
+            const fileChooserPromise = page.waitForEvent('filechooser');
+
+            console.log('Clicking "Update resume" button...');
+            await updateResumeButton.click();
+
+            // Handle the file chooser dialog
+            const fileChooser = await fileChooserPromise;
+
+            // Auto-detect resume file in assets folder
+            // Supports: doc, docx, rtf, pdf (up to 2 MB as per Naukri)
+            const resumePath = findResumeFile();
+
+            if (!resumePath) {
+                throw new Error('No resume file found in assets folder. Please add a .pdf, .doc, .docx, or .rtf file.');
+            }
+
+            console.log(`Auto-detected resume file: ${path.basename(resumePath)}`);
+            console.log(`Uploading resume from: ${resumePath}`);
+            await fileChooser.setFiles(resumePath);
+
+            // Wait for upload to complete - look for success message
+            console.log('Waiting for upload confirmation...');
+
+            // Verify the success message appears after upload
+            // Message: "Success - Resume has been successfully uploaded."
+            // Use filter to specifically target the resume upload message (not the headline one)
+            const uploadSuccessMessage = page.locator('.msgBox.success').filter({
+                hasText: 'Resume has been successfully uploaded.'
+            });
+            await expect(uploadSuccessMessage).toBeVisible({ timeout: 15000 });
+            console.log('✓ Resume uploaded successfully! Success message verified.');
+
+            console.log('Naukri Resume Refresh & Update Automation completed successfully!');
 
         } catch (error) {
             console.error('An error occurred during the automation script:', error);
